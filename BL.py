@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 BOT_TOKEN = os.environ["TOKEN"]
 PARIS_TZ = ZoneInfo("Europe/Paris")
 
-DEFAULT_BUYER_ID = 1312375517927706630
+DEFAULT_BUYER_IDS = [1312375517927706630, 1154853493455212544]  # Ajoute d'autres IDs ici si besoin
 DEFAULT_PREFIX = "&"
 
 # ========================= DATABASE =========================
@@ -57,8 +57,9 @@ def init_db():
     """)
 
     # Default config
+    import json
     c.execute("INSERT OR IGNORE INTO config VALUES ('prefix', ?)", (DEFAULT_PREFIX,))
-    c.execute("INSERT OR IGNORE INTO config VALUES ('buyer_id', ?)", (str(DEFAULT_BUYER_ID),))
+    c.execute("INSERT OR IGNORE INTO config VALUES ('buyer_ids', ?)", (json.dumps([str(i) for i in DEFAULT_BUYER_IDS]),))
 
     conn.commit()
     conn.close()
@@ -79,9 +80,12 @@ def set_config(key, value):
 
 
 def get_rank_db(user_id):
-    buyer_id = get_config("buyer_id")
-    if str(user_id) == str(buyer_id):
-        return 4
+    import json
+    buyer_ids_raw = get_config("buyer_ids")
+    if buyer_ids_raw:
+        buyer_ids = json.loads(buyer_ids_raw)
+        if str(user_id) in buyer_ids:
+            return 4
     conn = get_db()
     row = conn.execute("SELECT rank FROM ranks WHERE user_id = ?", (str(user_id),)).fetchone()
     conn.close()
