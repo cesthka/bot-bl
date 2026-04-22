@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 BOT_TOKEN = os.environ["TOKEN"]
 PARIS_TZ = ZoneInfo("Europe/Paris")
 
-DEFAULT_BUYER_IDS = [1312375517927706630, 1154853493455212544]  # Ajoute d'autres IDs ici si besoin
+DEFAULT_BUYER_IDS = [1312375517927706630]  # Ajoute d'autres IDs ici si besoin
 DEFAULT_PREFIX = "&"
 
 # ========================= DATABASE =========================
