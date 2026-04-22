@@ -261,7 +261,7 @@ async def on_member_join(member):
 def home_embed():
     p = get_config("prefix") or DEFAULT_PREFIX
     em = discord.Embed(color=embed_color())
-    em.set_author(name="Bot BL ─ Panel d'aide", icon_url="https://cdn.discordapp.com/embed/avatars/0.png")
+    em.set_author(name="Bot BL ─ Bot Blacklist", icon_url="https://cdn.discordapp.com/embed/avatars/0.png")
     em.description = (
         f"```\n🕐  {get_french_time()}\n```\n"
         f"Bienvenue sur le **Bot BL**.\n"
