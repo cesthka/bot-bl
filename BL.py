@@ -353,10 +353,10 @@ HELP_CATEGORIES = {
         "label": "Blacklist",
         "title": "🔨  Blacklist",
         "items": [
-            ("bl @user [raison]", "Blacklist un utilisateur", 1),
-            ("unbl @user",        "Retirer la blacklist",     1),
-            ("bl",                "Afficher la blacklist",    1),
-            ("blinfo @user",      "Infos sur un utilisateur", 1),
+            ("bl @user <raison>", "Blacklist (raison min. 5 caractères)", 1),
+            ("unbl @user",        "Retirer la blacklist",                 1),
+            ("bl",                "Afficher la blacklist",                1),
+            ("blinfo @user",      "Infos sur un utilisateur",             1),
         ],
     },
     "superbl": {
@@ -364,9 +364,9 @@ HELP_CATEGORIES = {
         "label": "Super Blacklist",
         "title": "⛔  Super Blacklist",
         "items": [
-            ("superbl @user [raison]", "Super blacklist",             3),
-            ("unsuperbl @user",        "Retirer la super blacklist",  3),
-            ("superbl",                "Afficher la super blacklist", 3),
+            ("superbl @user <raison>", "Super blacklist (raison min. 5 caractères)", 3),
+            ("unsuperbl @user",        "Retirer la super blacklist",                  3),
+            ("superbl",                "Afficher la super blacklist",                 3),
         ],
     },
     "perms": {
@@ -732,7 +732,7 @@ async def _try_unban_everywhere(user_id, reason):
 
 
 @bot.command(name="bl")
-async def _bl(ctx, user_input: str = None, *, reason: str = "Aucune raison fournie"):
+async def _bl(ctx, user_input: str = None, *, reason: str = None):
     if user_input is None:
         if not has_min_rank(ctx.author.id, 1):
             return await ctx.send(embed=error_embed("❌ Permission refusée", "**Whitelist+** requis."))
@@ -744,6 +744,16 @@ async def _bl(ctx, user_input: str = None, *, reason: str = "Aucune raison fourn
 
     if not has_min_rank(ctx.author.id, 1):
         return await ctx.send(embed=error_embed("❌ Permission refusée", "**Whitelist+** requis."))
+
+    # FIX: raison obligatoire, minimum 5 caractères (après strip)
+    if not reason or len(reason.strip()) < 5:
+        return await ctx.send(embed=error_embed(
+            "❌ Raison requise",
+            f"Tu dois fournir une raison d'au moins **5 caractères** pour un blacklist.\n"
+            f"Usage : `{get_prefix_cached()}bl @user <raison détaillée>`\n\n"
+            f"*Une raison claire aide tout le monde à comprendre pourquoi la personne est BL.*"
+        ))
+    reason = reason.strip()
 
     display, uid = await resolve_user_or_id(ctx, user_input)
     if uid is None:
@@ -863,7 +873,7 @@ async def _blinfo(ctx, *, user_input: str = None):
 # ========================= SUPER BLACKLIST =========================
 
 @bot.command(name="superbl")
-async def _superbl(ctx, user_input: str = None, *, reason: str = "Aucune raison fournie"):
+async def _superbl(ctx, user_input: str = None, *, reason: str = None):
     if user_input is None:
         if not has_min_rank(ctx.author.id, 3):
             return await ctx.send(embed=error_embed("❌ Permission refusée", "**Sys+** requis."))
@@ -875,6 +885,16 @@ async def _superbl(ctx, user_input: str = None, *, reason: str = "Aucune raison 
 
     if not has_min_rank(ctx.author.id, 3):
         return await ctx.send(embed=error_embed("❌ Permission refusée", "**Sys+** requis pour super blacklist."))
+
+    # FIX: raison obligatoire, minimum 5 caractères (après strip)
+    if not reason or len(reason.strip()) < 5:
+        return await ctx.send(embed=error_embed(
+            "❌ Raison requise",
+            f"Tu dois fournir une raison d'au moins **5 caractères** pour un super blacklist.\n"
+            f"Usage : `{get_prefix_cached()}superbl @user <raison détaillée>`\n\n"
+            f"*Le super BL est irréversible sans Sys+, une raison claire est obligatoire.*"
+        ))
+    reason = reason.strip()
 
     display, uid = await resolve_user_or_id(ctx, user_input)
     if uid is None:
