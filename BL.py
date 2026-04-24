@@ -1118,31 +1118,4 @@ if __name__ == "__main__":
         log.info("Arrêt demandé par l'utilisateur.")
     except Exception as e:
         log.error(f"Erreur fatale au démarrage : {e}", exc_info=True)
-        sys.exit(1)    elif isinstance(error, commands.ChannelNotFound):
-        await ctx.send(embed=error_embed("❌ Salon introuvable", "Impossible de trouver ce salon."))
-    elif isinstance(error, commands.CommandNotFound):
-        pass
-    else:
-        log.error(
-            f"Erreur non gérée '{ctx.command}' par {ctx.author} : {error}\n"
-            + "".join(traceback.format_exception(type(error), error, error.__traceback__))
-        )
-        try:
-            await ctx.send(embed=error_embed(
-                "❌ Erreur interne",
-                "Une erreur inattendue est survenue. Les logs ont été générés."
-            ))
-        except discord.HTTPException:
-            pass
-
-
-# ========================= RUN =========================
-if __name__ == "__main__":
-    try:
-        log.info("Démarrage du bot BL...")
-        bot.run(BOT_TOKEN, log_handler=None)
-    except KeyboardInterrupt:
-        log.info("Arrêt demandé par l'utilisateur.")
-    except Exception as e:
-        log.error(f"Erreur fatale au démarrage : {e}", exc_info=True)
         sys.exit(1)
