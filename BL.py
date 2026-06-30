@@ -144,6 +144,50 @@ def get_ranks_by_level(level):
     return [r["user_id"] for r in rows]
 
 
+# ---- Emojis personnalisables ----
+# Chaque emoji des embeds (ici : le help) est modifiable via &setemoji.
+DEFAULT_EMOJIS = {
+    "help_home_title":  "🔨",
+    "help_cat_bl":      "🔨",
+    "help_cat_superbl": "⛔",
+    "help_cat_system":  "🛠️",
+}
+
+EMOJI_LABELS = {
+    "help_home_title":  "Help · Titre accueil",
+    "help_cat_bl":      "Help · Catégorie Blacklist",
+    "help_cat_superbl": "Help · Catégorie Super BL",
+    "help_cat_system":  "Help · Catégorie Système",
+}
+
+
+def get_emojis():
+    raw = get_config("emojis")
+    data = {}
+    if raw:
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+    merged = dict(DEFAULT_EMOJIS)
+    merged.update({k: v for k, v in data.items() if k in DEFAULT_EMOJIS})
+    return merged
+
+
+def get_emoji(key):
+    return get_emojis().get(key, DEFAULT_EMOJIS.get(key, ""))
+
+
+def set_emoji(key, value):
+    emojis = get_emojis()
+    emojis[key] = value
+    set_config("emojis", json.dumps(emojis))
+
+
+def reset_emojis():
+    set_config("emojis", json.dumps(dict(DEFAULT_EMOJIS)))
+
+
 def add_blacklist(user_id, added_by, reason, is_super=0):
     conn = get_db()
     now = datetime.now(PARIS_TZ).strftime("%d/%m/%Y %Hh%M")
@@ -209,31 +253,25 @@ def embed_color():
 
 
 def success_embed(title, desc=""):
-    em = discord.Embed(title=title, description=desc, color=0x43b581)
-    em.set_footer(text="Blacklist Bot")
-    return em
+    return discord.Embed(title=title, description=desc, color=0x43b581)
 
 
 def error_embed(title, desc=""):
-    em = discord.Embed(title=title, description=desc, color=0xf04747)
-    em.set_footer(text="Blacklist Bot")
-    return em
+    return discord.Embed(title=title, description=desc, color=0xf04747)
 
 
 def info_embed(title, desc=""):
-    em = discord.Embed(title=title, description=desc, color=embed_color())
-    em.set_footer(text="Blacklist Bot")
-    return em
+    return discord.Embed(title=title, description=desc, color=embed_color())
 
 
-def get_french_time():
-    now = datetime.now(PARIS_TZ)
-    JOURS_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
-    MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin",
-               "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
-    jour = JOURS_FR[now.weekday()]
-    mois = MOIS_FR[now.month - 1]
-    return f"{jour} {now.day} {mois} {now.year} — {now.strftime('%Hh%M')}"
+def _emoji_for_select(raw):
+    """Convertit une chaîne emoji (unicode ou <:nom:id>) en PartialEmoji, ou None si invalide."""
+    if not raw:
+        return None
+    try:
+        return discord.PartialEmoji.from_str(raw)
+    except Exception:
+        return None
 
 
 # ========================= RESOLVE USER =========================
@@ -322,7 +360,6 @@ async def send_log(guild, action, author, target_display, target_id, reason=None
     em.add_field(name="Utilisateur", value=format_user_display(target_display, target_id), inline=True)
     if reason:
         em.add_field(name="Raison", value=reason, inline=False)
-    em.set_footer(text=get_french_time())
     try:
         await channel.send(embed=em)
     except discord.HTTPException as e:
@@ -335,7 +372,6 @@ async def send_log(guild, action, author, target_display, target_id, reason=None
 async def on_ready():
     log.info(f"Bot connecté : {bot.user} ({bot.user.id})")
     log.info(f"Prefix : {get_prefix_cached()}")
-    await bot.change_presence(activity=discord.Activity(type=discord.ActivityType.watching, name="blacklist"))
 
 
 @bot.event
@@ -350,7 +386,7 @@ async def on_member_join(member):
             log.warning(f"on_member_join: ban échoué pour {member.id} : {e}")
 
 
-# ========================= HELP SYSTEM (filtré par rang, nouveau style) =========================
+# ========================= HELP SYSTEM (filtré par rang) =========================
 
 # Rangs : 0 = Aucun, 1 = WL, 2 = Owner, 3 = Sys, 4 = Buyer
 
@@ -386,45 +422,18 @@ HELP_CATEGORIES = {
             ]),
         ],
     },
-    "perms": {
-        "emoji": "👥",
-        "label": "Permissions",
-        "title": "Permissions",
-        "subtitle": "Gérer les rangs du bot (wl, owner, sys).",
-        "sections": [
-            ("✨", "Whitelist (Owner+)", [
-                ("wl @user / unwl @user",       "Gérer la whitelist",   2),
-                ("wl",                          "Lister les WL",        2),
-            ]),
-            ("⭐", "Owner (Sys+)", [
-                ("owner @user / unowner @user", "Gérer les owners",     3),
-                ("owner",                       "Lister les owners",    3),
-            ]),
-            ("🔧", "Sys (Buyer)", [
-                ("sys @user / unsys @user",     "Gérer les sys",        4),
-                ("sys",                         "Lister les sys",       4),
-            ]),
-        ],
-    },
     "system": {
         "emoji": "🛠️",
         "label": "Système",
         "title": "Système",
-        "subtitle": "Configuration du bot (prefix, logs).",
+        "subtitle": "Configuration du bot (prefix, logs, emojis).",
         "sections": [
             ("⚙️", "Buyer only", [
-                ("prefix [nouveau]",   "Changer le prefix",   4),
-                ("setlog #salon",      "Salon de logs",       4),
+                ("prefix [nouveau]",   "Changer le prefix",            4),
+                ("setlog #salon",      "Salon de logs",                4),
+                ("setemoji",           "Personnaliser les emojis",     4),
             ]),
         ],
-    },
-    "hierarchy": {
-        "emoji": "📋",
-        "label": "Hiérarchie",
-        "title": "Hiérarchie",
-        "subtitle": "Les différents rangs du bot et leurs pouvoirs.",
-        "min_rank": 1,
-        "items": [],
     },
 }
 
@@ -452,7 +461,6 @@ def _bl_accessible_items(category_key, rank):
 
 
 def help_category_visible(category_key, rank):
-    """Gardé avec le même nom que la version d'origine pour compat."""
     cat = HELP_CATEGORIES.get(category_key, {})
     if "min_rank" in cat:
         return rank >= cat["min_rank"]
@@ -470,7 +478,7 @@ def _bl_apply_thumbnail(em, guild):
 def build_bl_category_embed(category_key, rank, guild=None):
     p = get_prefix_cached()
     cat = HELP_CATEGORIES[category_key]
-    emoji = cat.get("emoji", "📋")
+    emoji = get_emoji(f"help_cat_{category_key}") or cat.get("emoji", "📋")
     title = cat.get("title", "Commandes")
     subtitle = cat.get("subtitle", "")
 
@@ -504,39 +512,6 @@ def build_bl_category_embed(category_key, rank, guild=None):
             inline=False,
         )
 
-    em.set_footer(text="Made by gp ・ Bot BL")
-    return em
-
-
-def build_bl_hierarchy_embed(rank, guild=None):
-    em = discord.Embed(
-        title="📋  Hiérarchie",
-        description="Les différents rangs du bot et leurs pouvoirs.",
-        color=embed_color(),
-    )
-    _bl_apply_thumbnail(em, guild)
-
-    levels = [
-        (4, "👑", "Buyer",      "Accès total, gère les Sys"),
-        (3, "🔧", "Sys",        "Gère Owner/WL, bl tout le monde, seul à pouvoir unsuperbl"),
-        (2, "⭐", "Owner",       "Gère les WL, bl ceux en dessous"),
-        (1, "✨", "Whitelist",   "Bl ceux sans rang uniquement"),
-        (0, "👤", "Aucun",       "Peut seulement consulter la BL"),
-    ]
-    for lvl, icon, name, desc in levels:
-        marker = "  ← **toi**" if lvl == rank else ""
-        em.add_field(
-            name=f"{icon} {name}{marker}",
-            value=desc,
-            inline=False,
-        )
-
-    em.add_field(
-        name="ℹ️ Règle importante",
-        value="Un rang ne peut **jamais** bl quelqu'un de rang égal ou supérieur.",
-        inline=False,
-    )
-    em.set_footer(text="Made by gp ・ Bot BL")
     return em
 
 
@@ -545,9 +520,8 @@ def build_bl_home_embed(rank, guild=None):
     rank_label = rank_name(rank)
 
     em = discord.Embed(
-        title="🔨  Panel d'aide — Bot BL",
+        title=f"{get_emoji('help_home_title')}  Bot BL",
         description=(
-            f"Bot de **blacklist cross-serveur** pour Meira.\n"
             f"**Prefix :** `{p}` ・ **Ton rang :** {rank_label}\n\n"
             f"*Choisis une catégorie ci-dessous pour voir ses commandes.*"
         ),
@@ -558,19 +532,17 @@ def build_bl_home_embed(rank, guild=None):
     category_descs = {
         "bl":         "Blacklister et voir la liste",
         "superbl":    "Blacklist renforcée (irréversible sauf Sys+)",
-        "perms":      "Gérer les rangs (wl, owner, sys)",
         "system":     "Config du bot",
-        "hierarchy":  "Qui peut faire quoi",
     }
 
     user_keys  = ["bl", "superbl"]
-    admin_keys = ["perms", "system", "hierarchy"]
+    admin_keys = ["system"]
 
     user_lines = []
     for key in user_keys:
         if help_category_visible(key, rank):
             cat = HELP_CATEGORIES[key]
-            user_lines.append(f"{cat['emoji']} **{cat['label']}** — {category_descs[key]}")
+            user_lines.append(f"{get_emoji(f'help_cat_{key}')} **{cat['label']}** — {category_descs[key]}")
     if user_lines:
         em.add_field(name="🔨 Blacklist", value="\n".join(user_lines), inline=False)
 
@@ -578,19 +550,16 @@ def build_bl_home_embed(rank, guild=None):
     for key in admin_keys:
         if help_category_visible(key, rank):
             cat = HELP_CATEGORIES[key]
-            admin_lines.append(f"{cat['emoji']} **{cat['label']}** — {category_descs[key]}")
+            admin_lines.append(f"{get_emoji(f'help_cat_{key}')} **{cat['label']}** — {category_descs[key]}")
     if admin_lines:
         em.add_field(name="🛠️ Staff & Admin", value="\n".join(admin_lines), inline=False)
 
-    em.set_footer(text=f"Made by gp ・ Bot BL ・ {get_french_time()}")
     return em
 
 
 def build_help_embed_for(key, rank, guild=None):
     if key == "home":
         return build_bl_home_embed(rank, guild=guild)
-    if key == "hierarchy":
-        return build_bl_hierarchy_embed(rank, guild=guild)
     return build_bl_category_embed(key, rank, guild=guild)
 
 
@@ -602,7 +571,7 @@ class HelpDropdown(discord.ui.Select):
         for key, cat in HELP_CATEGORIES.items():
             if help_category_visible(key, user_rank):
                 options.append(discord.SelectOption(
-                    label=cat["label"], emoji=cat["emoji"], value=key
+                    label=cat["label"], emoji=_emoji_for_select(get_emoji(f"help_cat_{key}")), value=key
                 ))
         super().__init__(
             placeholder="📂 Choisis une catégorie...",
@@ -651,7 +620,6 @@ async def _help(ctx):
     await ctx.send(embed=build_bl_home_embed(rank, guild=ctx.guild), view=view)
 
 
-
 # ========================= PREFIX & LOGS =========================
 
 @bot.command(name="prefix")
@@ -672,6 +640,130 @@ async def _setlog(ctx, channel: discord.TextChannel = None):
         return await ctx.send(embed=error_embed("Argument manquant", "Mentionne un salon."))
     set_log_channel(ctx.guild.id, channel.id)
     await ctx.send(embed=success_embed("✅ Salon de logs défini", f"Les logs seront envoyés dans {channel.mention}."))
+
+
+# ---- &setemoji (éditeur interactif des emojis) ----
+
+def build_emoji_embed(guild=None):
+    emojis = get_emojis()
+    em = discord.Embed(
+        title="🎨 Emojis personnalisables",
+        description="Choisis un emoji à modifier dans le menu déroulant.\n"
+                    "Tu peux mettre un emoji classique (🔥) ou un emoji du serveur (`<:nom:id>`).",
+        color=embed_color(),
+    )
+    em.add_field(
+        name="🎙️ Help",
+        value="\n".join(f"{emojis[k]} **{EMOJI_LABELS[k]}**" for k in DEFAULT_EMOJIS),
+        inline=False,
+    )
+    _bl_apply_thumbnail(em, guild)
+    return em
+
+
+class EmojiSelect(discord.ui.Select):
+    def __init__(self):
+        options = []
+        for key in DEFAULT_EMOJIS:
+            options.append(discord.SelectOption(
+                label=EMOJI_LABELS.get(key, key)[:100],
+                value=key,
+                emoji=_emoji_for_select(get_emoji(key)),
+                description=key[:100],
+            ))
+        super().__init__(placeholder="Choisis un emoji à modifier...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        key = self.values[0]
+        label = EMOJI_LABELS.get(key, key)
+        panel_msg = interaction.message
+        author_id = self.view.author_id
+        guild = self.view.guild
+
+        # Le bot demande l'emoji dans le salon
+        await interaction.response.send_message(
+            f"📨 Envoie l'emoji pour **{label}** dans ce salon. *(60 secondes)*"
+        )
+
+        def check(m):
+            return m.author.id == author_id and m.channel.id == interaction.channel.id
+
+        try:
+            reply = await bot.wait_for("message", check=check, timeout=60)
+        except asyncio.TimeoutError:
+            try:
+                await interaction.edit_original_response(content="⏱️ Temps écoulé, aucun emoji reçu.")
+            except discord.HTTPException:
+                pass
+            return
+
+        val = reply.content.strip()
+        if val:
+            set_emoji(key, val)
+
+        # Supprime la demande du bot puis l'emoji envoyé par l'utilisateur
+        try:
+            await interaction.delete_original_response()
+        except discord.HTTPException:
+            pass
+        try:
+            await reply.delete()
+        except discord.HTTPException:
+            pass
+
+        # Met à jour le panneau
+        try:
+            await panel_msg.edit(embed=build_emoji_embed(guild), view=EmojiView(author_id, guild))
+        except discord.HTTPException:
+            pass
+
+
+class EmojiResetButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Tout réinitialiser", style=discord.ButtonStyle.danger, emoji="♻️")
+
+    async def callback(self, interaction: discord.Interaction):
+        reset_emojis()
+        await interaction.response.edit_message(
+            embed=build_emoji_embed(self.view.guild),
+            view=EmojiView(self.view.author_id, self.view.guild),
+        )
+
+
+class EmojiView(discord.ui.View):
+    def __init__(self, author_id, guild=None):
+        super().__init__(timeout=180)
+        self.author_id = author_id
+        self.guild = guild
+        self.add_item(EmojiSelect())
+        self.add_item(EmojiResetButton())
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
+@bot.command(name="setemoji")
+async def _setemoji(ctx, key: str = None, *, value: str = None):
+    if not has_min_rank(ctx.author.id, 4):
+        return await ctx.send(embed=error_embed("❌ Permission refusée", "Seul le **Buyer** peut modifier les emojis."))
+
+    # Mode direct : &setemoji <clé> <emoji>
+    if key is not None and value is not None:
+        if key not in DEFAULT_EMOJIS:
+            valid = "\n".join(f"`{k}`" for k in DEFAULT_EMOJIS)
+            return await ctx.send(embed=error_embed("❌ Clé inconnue", f"Clés valides :\n{valid}"))
+        set_emoji(key, value.strip())
+        return await ctx.send(embed=success_embed("✅ Emoji modifié", f"`{key}` → {value.strip()}"))
+
+    # Mode panneau interactif
+    await ctx.send(embed=build_emoji_embed(ctx.guild), view=EmojiView(ctx.author.id, ctx.guild))
 
 
 # ========================= SYS =========================
@@ -811,7 +903,6 @@ async def _unwl(ctx, *, user_input: str = None):
 async def _try_ban_everywhere(user_id, reason):
     """Tente de bannir un user_id sur toutes les guilds du bot. Retourne le nombre de succès."""
     count = 0
-    # On a besoin d'un objet User/Object pour passer à guild.ban
     user_obj = discord.Object(id=user_id)
     for guild in bot.guilds:
         try:
@@ -848,7 +939,7 @@ async def _bl(ctx, user_input: str = None, *, reason: str = None):
     if not has_min_rank(ctx.author.id, 1):
         return await ctx.send(embed=error_embed("❌ Permission refusée", "**Whitelist+** requis."))
 
-    # FIX: raison obligatoire, minimum 5 caractères (après strip)
+    # Raison obligatoire, minimum 5 caractères (après strip)
     if not reason or len(reason.strip()) < 5:
         return await ctx.send(embed=error_embed(
             "❌ Raison requise",
@@ -876,7 +967,6 @@ async def _bl(ctx, user_input: str = None, *, reason: str = None):
 
     add_blacklist(uid, ctx.author.id, reason, is_super=0)
 
-    # Tente de ban partout où le bot est (comme ça même un non-membre sera banni s'il revient)
     banned_count = await _try_ban_everywhere(uid, f"Blacklist par {ctx.author} | {reason}")
 
     if banned_count > 0:
@@ -969,7 +1059,6 @@ async def _blinfo(ctx, *, user_input: str = None):
     else:
         em.add_field(name="Statut BL", value="✅ Clean", inline=False)
 
-    em.set_footer(text="Blacklist Bot")
     await ctx.send(embed=em)
 
 
@@ -989,7 +1078,7 @@ async def _superbl(ctx, user_input: str = None, *, reason: str = None):
     if not has_min_rank(ctx.author.id, 3):
         return await ctx.send(embed=error_embed("❌ Permission refusée", "**Sys+** requis pour super blacklist."))
 
-    # FIX: raison obligatoire, minimum 5 caractères (après strip)
+    # Raison obligatoire, minimum 5 caractères (après strip)
     if not reason or len(reason.strip()) < 5:
         return await ctx.send(embed=error_embed(
             "❌ Raison requise",
