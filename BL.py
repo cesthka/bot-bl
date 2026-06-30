@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import os
 import asyncio
+import time
 import sqlite3
 import json
 import sys
@@ -18,7 +19,7 @@ if not BOT_TOKEN:
 
 PARIS_TZ = ZoneInfo("Europe/Paris")
 
-DEFAULT_BUYER_IDS = [142365250803466240, 923200874669563914]
+DEFAULT_BUYER_IDS = [1312375517927706630, 1312375955737542676, 1279358145151373352, 365576004808343552]
 DEFAULT_PREFIX = "&"
 
 # Volume persistant Railway : DATA_DIR doit pointer vers un dossier persistant
@@ -82,6 +83,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS log_channels (
             guild_id TEXT PRIMARY KEY,
             channel_id TEXT NOT NULL
+        )
+    """)
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS bl_actions (
+            user_id TEXT NOT NULL,
+            ts INTEGER NOT NULL
         )
     """)
 
@@ -186,6 +194,60 @@ def set_emoji(key, value):
 
 def reset_emojis():
     set_config("emojis", json.dumps(dict(DEFAULT_EMOJIS)))
+
+
+# ---- Limites de blacklist (anti-raid / anti-selfbot) ----
+# Nombre maximum de blacklists qu'un rang peut faire par fenêtre glissante.
+BL_LIMIT_WINDOW = 86400  # 24h en secondes
+
+DEFAULT_BL_LIMITS = {"1": 5, "2": 15, "3": 50, "4": 9999}
+
+
+def get_bl_limits():
+    raw = get_config("bl_limits")
+    data = {}
+    if raw:
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+    merged = dict(DEFAULT_BL_LIMITS)
+    merged.update({k: v for k, v in data.items() if k in DEFAULT_BL_LIMITS})
+    return merged
+
+
+def get_bl_limit_for_rank(rank):
+    return int(get_bl_limits().get(str(rank), 0))
+
+
+def set_bl_limit_for_rank(rank, limit):
+    limits = get_bl_limits()
+    limits[str(rank)] = int(limit)
+    set_config("bl_limits", json.dumps(limits))
+
+
+def reset_bl_limits():
+    set_config("bl_limits", json.dumps(dict(DEFAULT_BL_LIMITS)))
+
+
+def record_bl_action(user_id):
+    conn = get_db()
+    conn.execute("INSERT INTO bl_actions VALUES (?, ?)", (str(user_id), int(time.time())))
+    conn.commit()
+    conn.close()
+
+
+def count_bl_actions(user_id, window=BL_LIMIT_WINDOW):
+    cutoff = int(time.time()) - window
+    conn = get_db()
+    conn.execute("DELETE FROM bl_actions WHERE ts < ?", (cutoff,))  # nettoyage des vieilles entrées
+    row = conn.execute(
+        "SELECT COUNT(*) AS c FROM bl_actions WHERE user_id = ? AND ts >= ?",
+        (str(user_id), cutoff)
+    ).fetchone()
+    conn.commit()
+    conn.close()
+    return row["c"]
 
 
 def add_blacklist(user_id, added_by, reason, is_super=0):
@@ -432,6 +494,7 @@ HELP_CATEGORIES = {
                 ("prefix [nouveau]",   "Changer le prefix",            4),
                 ("setlog #salon",      "Salon de logs",                4),
                 ("setemoji",           "Personnaliser les emojis",     4),
+                ("limite",             "Limites de blacklist (anti-raid)", 4),
             ]),
         ],
     },
@@ -768,6 +831,118 @@ async def _setemoji(ctx, key: str = None, *, value: str = None):
     await ctx.send(embed=build_emoji_embed(ctx.guild), view=EmojiView(ctx.author.id, ctx.guild))
 
 
+# ---- &limite (limites de blacklist par rang, anti-selfbot) ----
+
+RANK_LEVELS_EDIT = [(4, "Buyer"), (3, "Sys"), (2, "Owner"), (1, "Whitelist")]
+
+
+def build_bl_limit_embed(guild=None):
+    limits = get_bl_limits()
+    em = discord.Embed(
+        title="🛡️ Limites de blacklist",
+        description="Nombre maximum de blacklists par **24h** et par rang.\n"
+                    "Choisis un rang dans le menu pour modifier sa limite.\n"
+                    "*Protection contre un ban-all via compte compromis / selfbot.*",
+        color=embed_color(),
+    )
+    for lvl, name in RANK_LEVELS_EDIT:
+        em.add_field(name=name, value=f"**{limits.get(str(lvl), 0)}** / 24h", inline=True)
+    _bl_apply_thumbnail(em, guild)
+    return em
+
+
+class BLLimitSelect(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label=name, value=str(lvl), description=f"Modifier la limite {name}")
+            for lvl, name in RANK_LEVELS_EDIT
+        ]
+        super().__init__(placeholder="Choisis un rang à modifier...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        lvl = int(self.values[0])
+        name = rank_name(lvl)
+        panel_msg = interaction.message
+        author_id = self.view.author_id
+        guild = self.view.guild
+
+        await interaction.response.send_message(
+            f"📨 Envoie le nombre de blacklists max / 24h pour **{name}**. *(60 secondes)*"
+        )
+
+        def check(m):
+            return m.author.id == author_id and m.channel.id == interaction.channel.id
+
+        try:
+            reply = await bot.wait_for("message", check=check, timeout=60)
+        except asyncio.TimeoutError:
+            try:
+                await interaction.edit_original_response(content="⏱️ Temps écoulé, aucune valeur reçue.")
+            except discord.HTTPException:
+                pass
+            return
+
+        raw = reply.content.strip()
+        if raw.isdigit():
+            set_bl_limit_for_rank(lvl, int(raw))
+        else:
+            try:
+                await interaction.followup.send("❌ Nombre invalide, aucune modification.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+
+        try:
+            await interaction.delete_original_response()
+        except discord.HTTPException:
+            pass
+        try:
+            await reply.delete()
+        except discord.HTTPException:
+            pass
+        try:
+            await panel_msg.edit(embed=build_bl_limit_embed(guild), view=BLLimitView(author_id, guild))
+        except discord.HTTPException:
+            pass
+
+
+class BLLimitResetButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Réinitialiser", style=discord.ButtonStyle.danger, emoji="♻️")
+
+    async def callback(self, interaction: discord.Interaction):
+        reset_bl_limits()
+        await interaction.response.edit_message(
+            embed=build_bl_limit_embed(self.view.guild),
+            view=BLLimitView(self.view.author_id, self.view.guild),
+        )
+
+
+class BLLimitView(discord.ui.View):
+    def __init__(self, author_id, guild=None):
+        super().__init__(timeout=180)
+        self.author_id = author_id
+        self.guild = guild
+        self.add_item(BLLimitSelect())
+        self.add_item(BLLimitResetButton())
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
+@bot.command(name="limite")
+async def _limite(ctx):
+    if not has_min_rank(ctx.author.id, 4):
+        return await ctx.send(embed=error_embed("❌ Permission refusée", "Seul le **Buyer** peut gérer les limites de blacklist."))
+    await ctx.send(embed=build_bl_limit_embed(ctx.guild), view=BLLimitView(ctx.author.id, ctx.guild))
+
+
 # ========================= SYS =========================
 
 @bot.command(name="sys")
@@ -967,7 +1142,18 @@ async def _bl(ctx, user_input: str = None, *, reason: str = None):
     if is_blacklisted(uid):
         return await ctx.send(embed=error_embed("Déjà BL", f"{format_user_display(display, uid)} est déjà blacklisté."))
 
+    # Anti-raid : limite de blacklists par 24h selon le rang
+    bl_limit = get_bl_limit_for_rank(author_rank)
+    bl_used = count_bl_actions(ctx.author.id)
+    if bl_used >= bl_limit:
+        return await ctx.send(embed=error_embed(
+            "⛔ Limite de blacklist atteinte",
+            f"Ton rang (**{rank_name(author_rank)}**) est limité à **{bl_limit}** blacklist(s) par 24h.\n"
+            f"Tu en as déjà effectué **{bl_used}**. Réessaie plus tard."
+        ))
+
     add_blacklist(uid, ctx.author.id, reason, is_super=0)
+    record_bl_action(ctx.author.id)
 
     banned_count = await _try_ban_everywhere(uid, f"Blacklist par {ctx.author} | {reason}")
 
@@ -1111,7 +1297,18 @@ async def _superbl(ctx, user_input: str = None, *, reason: str = None):
     if entry and not entry["is_super"]:
         remove_blacklist(uid)
 
+    # Anti-raid : limite de blacklists par 24h selon le rang
+    bl_limit = get_bl_limit_for_rank(author_rank)
+    bl_used = count_bl_actions(ctx.author.id)
+    if bl_used >= bl_limit:
+        return await ctx.send(embed=error_embed(
+            "⛔ Limite de blacklist atteinte",
+            f"Ton rang (**{rank_name(author_rank)}**) est limité à **{bl_limit}** blacklist(s) par 24h.\n"
+            f"Tu en as déjà effectué **{bl_used}**. Réessaie plus tard."
+        ))
+
     add_blacklist(uid, ctx.author.id, reason, is_super=1)
+    record_bl_action(ctx.author.id)
     banned_count = await _try_ban_everywhere(uid, f"Super blacklist par {ctx.author} | {reason}")
 
     if banned_count > 0:
