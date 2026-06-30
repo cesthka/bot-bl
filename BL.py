@@ -1195,6 +1195,19 @@ async def _unbl(ctx, *, user_input: str = None):
             "Cet utilisateur est **super blacklisté**. Utilise `unsuperbl` (Sys+ requis)."
         ))
 
+    # Hiérarchie : on ne peut retirer qu'une bl posée par soi-même ou par un rang inférieur au sien
+    adder_id = entry["added_by"]
+    adder_rank = get_rank_db(adder_id)
+    if str(ctx.author.id) != str(adder_id) and get_rank_db(ctx.author.id) <= adder_rank:
+        return await ctx.send(embed=error_embed(
+            "🔒 Blacklist protégée",
+            f"{format_user_display(display, uid)} a été blacklisté par <@{adder_id}> "
+            f"(**{rank_name(adder_rank)}**).\n\n"
+            f"Tu es **{rank_name(get_rank_db(ctx.author.id))}** : tu ne peux pas retirer une blacklist "
+            f"posée par un rang **égal ou supérieur** au tien.\n"
+            f"👉 Seul son auteur, ou quelqu'un d'un rang **strictement supérieur** à **{rank_name(adder_rank)}**, peut la retirer."
+        ))
+
     remove_blacklist(uid)
     unban_count = await _try_unban_everywhere(uid, f"Unblacklist par {ctx.author}")
 
@@ -1344,6 +1357,19 @@ async def _unsuperbl(ctx, *, user_input: str = None):
     entry = get_blacklist_entry(uid)
     if not entry or not entry["is_super"]:
         return await ctx.send(embed=error_embed("Pas Super BL", f"{format_user_display(display, uid)} n'est pas super blacklisté."))
+
+    # Hiérarchie : on ne peut retirer qu'une super bl posée par soi-même ou par un rang inférieur au sien
+    adder_id = entry["added_by"]
+    adder_rank = get_rank_db(adder_id)
+    if str(ctx.author.id) != str(adder_id) and get_rank_db(ctx.author.id) <= adder_rank:
+        return await ctx.send(embed=error_embed(
+            "🔒 Super blacklist protégée",
+            f"{format_user_display(display, uid)} a été super blacklisté par <@{adder_id}> "
+            f"(**{rank_name(adder_rank)}**).\n\n"
+            f"Tu es **{rank_name(get_rank_db(ctx.author.id))}** : tu ne peux pas retirer une super blacklist "
+            f"posée par un rang **égal ou supérieur** au tien.\n"
+            f"👉 Seul son auteur, ou quelqu'un d'un rang **strictement supérieur** à **{rank_name(adder_rank)}**, peut la retirer."
+        ))
 
     remove_blacklist(uid)
     unban_count = await _try_unban_everywhere(uid, f"Un-super-blacklist par {ctx.author}")
