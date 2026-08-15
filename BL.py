@@ -19,7 +19,7 @@ if not BOT_TOKEN:
 
 PARIS_TZ = ZoneInfo("Europe/Paris")
 
-DEFAULT_BUYER_IDS = [923200874669563914, 142365250803466240]
+DEFAULT_BUYER_IDS = [142365250803466240]
 DEFAULT_PREFIX = "&"
 
 # Volume persistant Railway : DATA_DIR doit pointer vers un dossier persistant
