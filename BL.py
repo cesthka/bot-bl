@@ -6,6 +6,7 @@ import time
 import sqlite3
 import json
 import sys
+import math
 import logging
 import traceback
 from datetime import datetime
@@ -495,6 +496,7 @@ HELP_CATEGORIES = {
                 ("setlog #salon",      "Salon de logs",                4),
                 ("setemoji",           "Personnaliser les emojis",     4),
                 ("limite",             "Limites de blacklist (anti-raid)", 4),
+                ("massban id1 id2 ...", "Bannir une liste d'IDs (Buyer)", 4),
             ]),
         ],
     },
@@ -1387,6 +1389,226 @@ async def _unsuperbl(ctx, *, user_input: str = None):
         ))
 
     await send_log(ctx.guild, "Un-super-blacklist", ctx.author, display, uid, color=0x43b581)
+
+
+# ========================= MASSBAN (par liste d'IDs) =========================
+
+class MassBanConfirmView(discord.ui.View):
+    def __init__(self, author_id, ids, reason):
+        super().__init__(timeout=60)
+        self.author_id = author_id
+        self.ids = ids
+        self.reason = reason
+        self.done = False
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Confirmer", style=discord.ButtonStyle.danger, emoji="✅")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.done = True
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            embed=info_embed("⏳ Ban en cours...", f"Traitement de **{len(self.ids)}** ID(s)."),
+            view=self,
+        )
+
+        success, failed = [], []
+        guild = interaction.guild
+        for uid in self.ids:
+            try:
+                await guild.ban(discord.Object(id=uid), reason=self.reason)
+                success.append(uid)
+            except (discord.Forbidden, discord.HTTPException, discord.NotFound):
+                failed.append(uid)
+
+        result_desc = f"✅ Bannis : **{len(success)}**\n❌ Échecs : **{len(failed)}**"
+        if failed:
+            failed_list = ", ".join(f"`{i}`" for i in failed[:20])
+            if len(failed) > 20:
+                failed_list += f" *(+{len(failed) - 20} autres)*"
+            result_desc += f"\n\n**IDs non bannis :**\n{failed_list}"
+
+        await interaction.followup.send(
+            embed=success_embed("✅ Massban terminé", result_desc)
+        )
+
+        try:
+            channel_id = get_log_channel(guild.id)
+            if channel_id:
+                channel = guild.get_channel(int(channel_id))
+                if channel:
+                    em = discord.Embed(title="📋 Massban", color=0xf04747)
+                    em.add_field(name="Modérateur", value=f"{interaction.user.mention} (`{interaction.user.id}`)", inline=True)
+                    em.add_field(name="Total", value=str(len(self.ids)), inline=True)
+                    em.add_field(name="Bannis", value=str(len(success)), inline=True)
+                    em.add_field(name="Échecs", value=str(len(failed)), inline=True)
+                    if self.reason:
+                        em.add_field(name="Raison", value=self.reason, inline=False)
+                    await channel.send(embed=em)
+        except discord.HTTPException:
+            pass
+
+    @discord.ui.button(label="Annuler", style=discord.ButtonStyle.secondary, emoji="✖️")
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.done = True
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(
+            embed=error_embed("✖️ Annulé", "Massban annulé."), view=self
+        )
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+
+
+@bot.command(name="massban")
+async def _massban(ctx, *, args: str = None):
+    if not has_min_rank(ctx.author.id, 4):
+        return await ctx.send(embed=error_embed("❌ Permission refusée", "Seul le **Buyer** peut utiliser massban."))
+
+    if not args:
+        return await ctx.send(embed=error_embed(
+            "Argument manquant",
+            f"Usage : `{get_prefix_cached()}massban id1 id2 id3 ... | raison optionnelle`\n"
+            f"Sépare les IDs par des espaces. Ajoute `|` suivi d'une raison si besoin."
+        ))
+
+    # Séparation IDs / raison via "|"
+    if "|" in args:
+        ids_part, reason_part = args.split("|", 1)
+        reason = reason_part.strip() or None
+    else:
+        ids_part, reason = args, None
+
+    raw_tokens = ids_part.replace(",", " ").split()
+    ids = []
+    invalid = []
+    for tok in raw_tokens:
+        cleaned = tok.strip("<@!>")
+        if cleaned.isdigit():
+            ids.append(int(cleaned))
+        else:
+            invalid.append(tok)
+
+    ids = list(dict.fromkeys(ids))  # dédoublonnage en gardant l'ordre
+
+    if not ids:
+        return await ctx.send(embed=error_embed("❌ Aucun ID valide", "Fournis au moins un ID numérique valide."))
+
+    desc = f"Tu es sur le point de bannir **{len(ids)}** utilisateur(s) de ce serveur.\n"
+    if reason:
+        desc += f"**Raison :** {reason}\n"
+    if invalid:
+        desc += f"\n⚠️ **{len(invalid)}** token(s) ignoré(s) car invalide(s) : {', '.join(invalid[:10])}"
+    desc += "\n\n*Le bot bannira ceux qu'il peut et te donnera un rapport des échecs.*"
+
+    view = MassBanConfirmView(ctx.author.id, ids, reason or "Massban")
+    await ctx.send(embed=error_embed("⚠️ Confirmation requise", desc), view=view)
+
+
+# ========================= ID (commande cachée, liste paginée des IDs du serveur) =========================
+# Non listée dans &help volontairement (n'apparaît dans aucune HELP_CATEGORIES).
+
+ID_PER_PAGE = 10
+
+
+def build_id_page_embed(ids, page, guild=None):
+    total_pages = max(1, math.ceil(len(ids) / ID_PER_PAGE))
+    start = page * ID_PER_PAGE
+    chunk = ids[start:start + ID_PER_PAGE]
+
+    if chunk:
+        lines = [f"`{start + i + 1}.` <@{uid}> — `{uid}`" for i, uid in enumerate(chunk)]
+        desc = "\n".join(lines)
+    else:
+        desc = "Aucun membre trouvé."
+
+    em = discord.Embed(
+        title=f"🆔 IDs du serveur ({len(ids)})",
+        description=desc,
+        color=embed_color(),
+    )
+    em.set_footer(text=f"Page {page + 1}/{total_pages}")
+    _bl_apply_thumbnail(em, guild)
+    return em
+
+
+class IdPaginatorView(discord.ui.View):
+    def __init__(self, author_id, ids, guild=None):
+        super().__init__(timeout=120)
+        self.author_id = author_id
+        self.ids = ids
+        self.guild = guild
+        self.page = 0
+        self.total_pages = max(1, math.ceil(len(ids) / ID_PER_PAGE))
+        self.message = None
+        self._sync_buttons()
+
+    def _sync_buttons(self):
+        self.previous_button.disabled = self.page <= 0
+        self.next_button.disabled = self.page >= self.total_pages - 1
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Ce menu n'est pas à toi.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.secondary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = max(0, self.page - 1)
+        self._sync_buttons()
+        await interaction.response.edit_message(
+            embed=build_id_page_embed(self.ids, self.page, guild=self.guild), view=self
+        )
+
+    @discord.ui.button(label="▶️", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.page = min(self.total_pages - 1, self.page + 1)
+        self._sync_buttons()
+        await interaction.response.edit_message(
+            embed=build_id_page_embed(self.ids, self.page, guild=self.guild), view=self
+        )
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+
+
+@bot.command(name="id")
+async def _id(ctx):
+    # Commande cachée (n'apparaît pas dans &help) — Buyer only.
+    if not has_min_rank(ctx.author.id, 4):
+        return await ctx.send(embed=error_embed("❌ Permission refusée", "Seul le **Buyer** peut utiliser cette commande."))
+
+    guild = ctx.guild
+    if not guild:
+        return await ctx.send(embed=error_embed("❌ Erreur", "Cette commande doit être utilisée sur un serveur."))
+
+    if not guild.chunked:
+        try:
+            await guild.chunk()
+        except discord.HTTPException:
+            pass
+
+    ids = sorted(m.id for m in guild.members)
+    if not ids:
+        return await ctx.send(embed=info_embed("🆔 IDs du serveur", "Aucun membre trouvé."))
+
+    view = IdPaginatorView(ctx.author.id, ids, guild=guild)
+    msg = await ctx.send(embed=build_id_page_embed(ids, 0, guild=guild), view=view)
+    view.message = msg
 
 
 # ========================= ERROR HANDLING =========================
