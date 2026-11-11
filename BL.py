@@ -614,13 +614,13 @@ class PagerView(OwnedView):
         apply_thumbnail(em, self.guild)
         return em
 
-    ＠discord.ui.button(label="◀️", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.secondary)
     async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page = max(0, self.page - 1)
         self._sync()
         await interaction.response.edit_message(embed=self.embed(), view=self)
 
-    ＠discord.ui.button(label="▶️", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="▶️", style=discord.ButtonStyle.secondary)
     async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.page = min(self.pages - 1, self.page + 1)
         self._sync()
@@ -1360,4 +1360,3 @@ if __name__ == "__main__":
     except Exception as e:
         log.error(f"Erreur fatale au démarrage : {e}", exc_info=True)
         sys.exit(1)
-</pasted_content id="47c0">
